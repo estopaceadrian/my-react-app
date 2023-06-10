@@ -1,21 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import c3 from 'c3';
-import { fetchStockData } from '../services/api';
+import { fetchStockDataLimited } from '../services/api';
+import './chart.css';
 
 export default function Chart({ width, height }) {
   const chartRef = useRef(null);
   const [metaData, setMetaData] = useState(null);
   const [chartRendered, setChartRendered] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Add isLoading state
 
   const fetchData = async () => {
     try {
-      const stockData = await fetchStockData();
+      const stockData = await fetchStockDataLimited();
       setMetaData(stockData.metaData);
       if (!chartRendered) {
         renderChart(stockData);
         setChartRendered(true);
       }
+      setIsLoading(false); // Set isLoading to false when data is fetched
     } catch (error) {
       console.error('Error fetching data:', error);
     }
@@ -29,6 +32,11 @@ export default function Chart({ width, height }) {
     if (chartRef.current) {
       // Remove the existing SVG element
       d3.select(chartRef.current).select('svg').remove();
+      // Declare and select the tooltip element
+      const tooltip = d3
+        .select(chartRef.current)
+        .append('div')
+        .attr('id', 'tooltip');
 
       const margin = { top: 20, right: 30, bottom: 30, left: 60 };
       const chartWidth = width - margin.left - margin.right;
@@ -43,7 +51,6 @@ export default function Chart({ width, height }) {
         .attr('transform', `translate(${margin.left},${margin.top})`);
 
       const parseDate = d3.timeParse('%Y-%m-%d %H:%M:%S');
-      console.log('timeSeriesData', timeSeriesData);
 
       const data = Object.entries(timeSeriesData).map(([timestamp, values]) => {
         const date = parseDate(timestamp);
@@ -55,8 +62,6 @@ export default function Chart({ width, height }) {
 
         return { timestamp: date, open, high, low, close, volume };
       });
-      // Log the processed data to verify its structure and values
-      console.log('data:', data);
 
       const xScale = d3
         .scaleTime()
@@ -81,7 +86,8 @@ export default function Chart({ width, height }) {
       const openLine = d3
         .line()
         .x((d) => xScale(d.timestamp))
-        .y((d) => yScale(d.open));
+        .y((d) => yScale(d.open))
+        .curve(d3.curveMonotoneX);
 
       const highLine = d3
         .line()
@@ -211,7 +217,53 @@ export default function Chart({ width, height }) {
         .attr('y', -margin.top / 2 + 60)
         .attr('text-anchor', 'middle')
         .text(metaData ? `Interval: ${metaData['4. Interval']}` : '');
-
+      let dataPoints; // Declare dataPoints variable
+      // Add the data points
+      dataPoints = svg
+        .selectAll('.data-point')
+        .data(data)
+        .enter()
+        .append('circle')
+        .attr('class', 'data-point')
+        .attr('cx', (d) => xScale(d.timestamp))
+        .attr('cy', (d) => yScale(d.high))
+        .attr('r', 3)
+        .attr('fill', 'red')
+        .style('visibility', 'hidden')
+        .on('mouseover', (event, d) => {
+          // Show all the data when hovering over a data point
+          tooltip.html(`
+            <div>Date: ${d.timestamp}</div>
+            <div>Open: ${d.open}</div>
+            <div>High: ${d.high}</div>
+            <div>Low: ${d.low}</div>
+            <div>Close: ${d.close}</div>
+            <div>Volume: ${d.volume}</div>
+          `);
+          tooltip.style('display', 'block');
+        })
+        .on('mouseout', () => {
+          // Hide the tooltip when not hovering over a data point
+          tooltip.style('display', 'none');
+        })
+        .on('mousemove', (event) => {
+          // Position the tooltip relative to the mouse cursor
+          const tooltipWidth = parseInt(tooltip.style('width'));
+          const tooltipHeight = parseInt(tooltip.style('height'));
+          const x = event.pageX - tooltipWidth / 2;
+          const y = event.pageY - tooltipHeight - 10;
+          tooltip.style('left', `${x}px`);
+          tooltip.style('top', `${y}px`);
+        });
+      // Handle mouse events
+      svg
+        .on('mouseover', () => {
+          dataPoints.style('visibility', 'visible'); // Show data points on mouseover
+        })
+        .on('mouseout', () => {
+          dataPoints.style('visibility', 'hidden'); // Hide data points on mouseout
+          tooltip.style('display', 'none'); // Hide tooltip on mouseout
+        });
       // Cleanup on component unmount
       return () => svg.remove();
     }
@@ -219,10 +271,19 @@ export default function Chart({ width, height }) {
 
   return (
     <div className="flex flex-col items-center mt-9">
-      <div
-        ref={chartRef}
-        style={{ width: `${width}px`, height: `${height}px` }}
-      />
+      {isLoading ? ( // Show the loading image while isLoading is true
+        <>
+          <div className="sm:animate-spin lg:animate-spin">
+            <span className="text-5xl">🌎 </span>
+          </div>
+          <span className="text-2xl">Processing . . .</span>
+        </>
+      ) : (
+        <div
+          ref={chartRef}
+          style={{ width: `${width}px`, height: `${height}px` }}
+        />
+      )}
     </div>
   );
 }
